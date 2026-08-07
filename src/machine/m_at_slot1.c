@@ -1131,13 +1131,14 @@ machine_at_be6ii_20_init(const machine_t *model)
     return machine_at_be6ii_hpt370_init(model, &ide_hpt370_20_ter_qua_onboard_device);
 }
 
-static const device_config_t bx6_config[] = {
+/* ABIT AB-BX6, original revision (4 PCI / 3 ISA, 128 KiB BIOS). */
+static const device_config_t abit_bx6_config[] = {
     // clang-format off
     {
         .name           = "bios",
         .description    = "BIOS Version",
         .type           = CONFIG_BIOS,
-        .default_string = "bx6",
+        .default_string = "abit_bx6_gq",
         .default_int    = 0,
         .file_filter    = NULL,
         .spinner        = { 0 },
@@ -1145,48 +1146,48 @@ static const device_config_t bx6_config[] = {
         .bios           = {
             {
                 .name          = "Award Modular BIOS v4.51PG - Revision EG",
-                .internal_name = "bx6",
+                .internal_name = "abit_bx6_eg",
                 .bios_type     = BIOS_NORMAL,
                 .files_no      = 1,
                 .local         = 0,
                 .size          = 131072,
-                .files         = { "roms/machines/bx6/BX6_EG.BIN", "" }
+                .files         = { "roms/machines/abit_bx6/BX6_EG.BIN", "" }
             },
             {
                 .name          = "Award Modular BIOS v4.51PG - Revision CW",
-                .internal_name = "bx6_CW",
+                .internal_name = "abit_bx6_cw",
                 .bios_type     = BIOS_NORMAL,
                 .files_no      = 1,
                 .local         = 0,
                 .size          = 131072,
-                .files         = { "roms/machines/bx6/BX6_CW.bin", "" }
+                .files         = { "roms/machines/abit_bx6/BX6_CW.BIN", "" }
             },
             {
                 .name          = "Award Modular BIOS v4.51PG - Revision GQ",
-                .internal_name = "bx6_GQ",
+                .internal_name = "abit_bx6_gq",
                 .bios_type     = BIOS_NORMAL,
                 .files_no      = 1,
                 .local         = 0,
                 .size          = 131072,
-                .files         = { "roms/machines/bx6/BX6_GQ.bin", "" }
+                .files         = { "roms/machines/abit_bx6/BX6_GQ.BIN", "" }
             },
             {
                 .name          = "Award Modular BIOS v4.51PG - Revision JL",
-                .internal_name = "bx6_JL",
+                .internal_name = "abit_bx6_jl",
                 .bios_type     = BIOS_NORMAL,
                 .files_no      = 1,
                 .local         = 0,
                 .size          = 131072,
-                .files         = { "roms/machines/bx6/BX6_JL.bin", "" }
+                .files         = { "roms/machines/abit_bx6/BX6_JL.BIN", "" }
             },
             {
                 .name          = "Award Modular BIOS v4.51PG - Revision QS",
-                .internal_name = "bx6_qs",
+                .internal_name = "abit_bx6_qs",
                 .bios_type     = BIOS_NORMAL,
                 .files_no      = 1,
                 .local         = 0,
                 .size          = 131072,
-                .files         = { "roms/machines/bx6/BX6_QS.bin", "" }
+                .files         = { "roms/machines/abit_bx6/BX6_QS.BIN", "" }
             },
             { .files_no = 0 }
         }
@@ -1195,9 +1196,9 @@ static const device_config_t bx6_config[] = {
     // clang-format on
 };
 
-const device_t bx6_device = {
+const device_t abit_bx6_device = {
     .name          = "ABIT AB-BX6",
-    .internal_name = "bx6",
+    .internal_name = "abit_bx6",
     .flags         = 0,
     .local         = 0,
     .init          = NULL,
@@ -1206,11 +1207,11 @@ const device_t bx6_device = {
     .available     = NULL,
     .speed_changed = NULL,
     .force_redraw  = NULL,
-    .config        = bx6_config
+    .config        = abit_bx6_config
 };
 
 int
-machine_at_bx6_init(const machine_t *model)
+machine_at_abit_bx6_init(const machine_t *model)
 {
     int         ret = 0;
     const char *fn;
@@ -1239,7 +1240,8 @@ machine_at_bx6_init(const machine_t *model)
     device_add(&piix4e_device);
     device_add_params(&w83977_device, (void *) (W83977TF | W83977_AMI | W83977_NO_NVR));
     device_add(&sst_flash_29ee010_device);
-    spd_register(SPD_TYPE_SDRAM, 0xF, 256);
+    spd_register(SPD_TYPE_SDRAM, 0x0f, 128);
+    device_add(&lm79_device); /* fans: CPU, chassis, power; temperature: system */
 
     return ret;
 }

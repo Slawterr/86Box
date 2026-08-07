@@ -82,7 +82,7 @@
 #define FLAG_AMI_1999_HACK      0x0800
 #define FLAG_AMI_1999J_HACK     0x1000
 #define FLAG_SPITFIRE_HACK      0x2000
-#define FLAG_BX6_HACK           0x4000
+#define FLAG_ABIT_BX6_SOFTMENU  0x4000
 
 #define NVR_CENTURY_AT          (RTC_CENTURY_AT << 16)
 #define NVR_CENTURY_PS          (RTC_CENTURY_PS << 16)

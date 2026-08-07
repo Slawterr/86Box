@@ -1337,9 +1337,9 @@ extern int             machine_at_be6ii_init(const machine_t *);
 extern int             machine_at_be6ii_12_init(const machine_t *);
 extern int             machine_at_be6ii_20_init(const machine_t *);
 #ifdef EMU_DEVICE_H
-extern const device_t  bx6_device;
+extern const device_t  abit_bx6_device;
 #endif
-extern int             machine_at_bx6_init(const machine_t *);
+extern int             machine_at_abit_bx6_init(const machine_t *);
 #ifdef EMU_DEVICE_H
 extern const device_t  ax6bc_device;
 #endif
