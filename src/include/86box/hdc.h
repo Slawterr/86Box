@@ -87,6 +87,7 @@ extern const device_t ide_hpt366_ter_qua_device;                /* HighPoint HPT
 extern const device_t ide_hpt366_ter_qua_onboard_device;        /* HighPoint HPT366 (Tertiary and quaternary channels, on-board) */
 extern const device_t ide_hpt370_ter_qua_onboard_device;        /* HighPoint HPT370 (Tertiary and quaternary channels, on-board) */
 extern const device_t ide_hpt370_20_ter_qua_onboard_device;     /* HighPoint HPT370 (Tertiary and quaternary channels, on-board, 64K ROM BAR) */
+extern const device_t ide_abit_hotrod100pro_device;             /* ABIT Hot Rod 100 Pro (PCI) */
 
 extern const device_t ide_pc87410_device;                       /* National Semiconductor PC87410 PCI */
 

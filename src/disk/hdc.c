@@ -104,6 +104,7 @@ static const struct {
     { &ide_cmd648_ter_qua_device            },
     { &ide_cmd649_ter_qua_device            },
     { &ide_hpt366_ter_qua_device            },
+    { &ide_abit_hotrod100pro_device         },
     { &ide_pci_device                       },
     { &ide_pci_2ch_device                   },
     { &ide_w83769f_pci_device               }, /* PCI variant? TODO: to add implement W83759 IDE controller */

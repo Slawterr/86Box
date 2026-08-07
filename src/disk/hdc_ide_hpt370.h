@@ -12,6 +12,7 @@
 
 #define HPT370_ROM_BAR_32K 1
 #define HPT370_ROM_BAR_64K 2
+#define HPT370_ADDON       4
 
 void  hpt370_reset(void *priv);
 void  hpt370_close(void *priv);

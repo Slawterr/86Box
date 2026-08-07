@@ -24,9 +24,13 @@
 #include <86box/hdc_ide.h>
 #include <86box/hdc_ide_sff8038i.h>
 #include <86box/io.h>
+#include <86box/mem.h>
 #include <86box/pci.h>
 #include <86box/plat_unused.h>
+#include <86box/rom.h>
 #include "hdc_ide_hpt370.h"
+
+#define HPT370_BIOS_FILE "roms/hdd/ide/hpt370_2351.bin"
 
 typedef struct hpt370_t hpt370_t;
 
@@ -42,7 +46,9 @@ struct hpt370_t {
     uint16_t    bm_base[2];
     hpt370_func_t func[2];
     uint32_t    rom_bar_size;
-    uint16_t     oscillator_reads;
+    uint16_t    oscillator_reads;
+    uint8_t     onboard;
+    rom_t       bios_rom;
 };
 
 static void    hpt370_pci_write(int func, int addr, int len, uint8_t val, void *priv);
@@ -50,6 +56,29 @@ static uint8_t hpt370_pci_read(int func, int addr, int len, void *priv);
 static uint8_t hpt370_io_read(uint16_t port, void *priv);
 static void    hpt370_io_write(uint16_t port, uint8_t val, void *priv);
 static uint8_t hpt370_bm_read(uint16_t port, uint8_t val, void *priv);
+
+static int
+hpt370_enabled(const hpt370_t *dev)
+{
+    return !dev->onboard || hdc_onboard_enabled;
+}
+
+static void
+hpt370_rom_mapping_update(hpt370_t *dev)
+{
+    uint32_t rom_addr;
+
+    if (dev->onboard)
+        return;
+
+    rom_addr = dev->regs[0][0x30] | (dev->regs[0][0x31] << 8) |
+               (dev->regs[0][0x32] << 16) | (dev->regs[0][0x33] << 24);
+
+    if ((dev->regs[0][0x04] & 0x02) && (rom_addr & 0x01))
+        mem_mapping_set_addr(&dev->bios_rom.mapping, rom_addr & ~(dev->rom_bar_size - 1), dev->rom_bar_size);
+    else
+        mem_mapping_disable(&dev->bios_rom.mapping);
+}
 
 static void
 hpt370_rom_bar_write(hpt370_t *dev, int addr, uint8_t val)
@@ -66,6 +95,7 @@ hpt370_rom_bar_write(hpt370_t *dev, int addr, uint8_t val)
     dev->regs[0][0x31] = (rom_addr >> 8) & 0xff;
     dev->regs[0][0x32] = (rom_addr >> 16) & 0xff;
     dev->regs[0][0x33] = (rom_addr >> 24) & 0xff;
+    hpt370_rom_mapping_update(dev);
 }
 
 #ifdef ENABLE_HPT370_LOG
@@ -105,20 +135,20 @@ hpt370_ide_handler(hpt370_t *dev, int func)
     ide_set_base(channel, main);
     ide_set_side(channel, side);
 
-    if (hdc_onboard_enabled && channel_enabled && (dev->regs[0][0x04] & 0x01) && main && side)
+    if (hpt370_enabled(dev) && channel_enabled && (dev->regs[0][0x04] & 0x01) && main && side)
         ide_handlers(channel, 1);
 
     hpt370_log("HPT370 function %i: IDE %i at %04X/%04X enabled=%i command=%02X control=%02X onboard=%i\n",
                func, channel, main, side,
-               hdc_onboard_enabled && channel_enabled && (dev->regs[0][0x04] & 0x01) && main && side,
-               dev->regs[0][0x04], dev->regs[0][0x50 + (func << 2)], hdc_onboard_enabled);
+               hpt370_enabled(dev) && channel_enabled && (dev->regs[0][0x04] & 0x01) && main && side,
+               dev->regs[0][0x04], dev->regs[0][0x50 + (func << 2)], hpt370_enabled(dev));
 }
 
 static void
 hpt370_bm_handler(hpt370_t *dev, int func)
 {
     const uint16_t base = ((dev->regs[0][0x21] << 8) | (dev->regs[0][0x20] & 0xf0)) + (func << 3);
-    const int      enabled = hdc_onboard_enabled && ((dev->regs[0][0x04] & 0x05) == 0x05);
+    const int      enabled = hpt370_enabled(dev) && ((dev->regs[0][0x04] & 0x05) == 0x05);
 
     if (dev->bm_base[func] && !func)
         io_removehandler(dev->bm_base[func] + 0x10, 0x8a,
@@ -128,7 +158,7 @@ hpt370_bm_handler(hpt370_t *dev, int func)
     sff_bus_master_handler(dev->bm[func], enabled, base);
 
     dev->bm_base[func] = base;
-    if (hdc_onboard_enabled && (dev->regs[0][0x04] & 0x01) && base && !func)
+    if (hpt370_enabled(dev) && (dev->regs[0][0x04] & 0x01) && base && !func)
         io_sethandler(base + 0x10, 0x8a,
                       hpt370_io_read, NULL, NULL,
                       hpt370_io_write, NULL, NULL, &dev->func[func]);
@@ -223,7 +253,8 @@ hpt370_pci_write(int func, int addr, UNUSED(int len), uint8_t val, void *priv)
             dev->regs[func][addr] = val & 0x07;
             hpt370_ide_handler(dev, func);
             hpt370_bm_handler(dev, func);
-                    break;
+            hpt370_rom_mapping_update(dev);
+            break;
         case 0x05:
             dev->regs[func][addr] = val & 0x01;
             break;
@@ -404,6 +435,7 @@ hpt370_reset(void *priv)
     dev->regs[0][0x79] = 0x00;
     hpt370_ide_handler(dev, 0);
     hpt370_ide_handler(dev, 1);
+    hpt370_rom_mapping_update(dev);
 }
 
 void
@@ -425,25 +457,29 @@ hpt370_init(UNUSED(const device_t *info))
 {
     hpt370_t *dev = (hpt370_t *) calloc(1, sizeof(hpt370_t));
 
-    /*
-     * The on-board option ROM is a module of the motherboard Award BIOS.
-     * Expose the PCI expansion ROM BAR size, but leave firmware loading to
-     * the emulated system BIOS instead of creating a second ROM mapping.
-     */
-    dev->rom_bar_size = (info->local == HPT370_ROM_BAR_64K) ? 0x00010000 : 0x00008000;
+    /* The on-board variants use the option ROM module in the motherboard BIOS. */
+    dev->onboard      = !(info->local & HPT370_ADDON);
+    dev->rom_bar_size = ((info->local & HPT370_ROM_BAR_64K) || !dev->onboard) ? 0x00010000 : 0x00008000;
     dev->func[0].dev = dev;
     dev->func[0].id  = 0;
     dev->func[1].dev = dev;
     dev->func[1].id  = 1;
 
     device_add(&ide_pci_ter_qua_2ch_device);
-    pci_add_card(PCI_ADD_IDE, hpt370_pci_read, hpt370_pci_write, dev, &dev->pci_slot);
+    pci_add_card(dev->onboard ? PCI_ADD_IDE : PCI_ADD_NORMAL,
+                 hpt370_pci_read, hpt370_pci_write, dev, &dev->pci_slot);
 
     dev->bm[0] = device_add_inst(&sff8038i_device, 3);
     dev->bm[1] = device_add_inst(&sff8038i_device, 4);
 
     sff_set_ven_handlers(dev->bm[0], NULL, hpt370_bm_read, &dev->func[0]);
     sff_set_ven_handlers(dev->bm[1], NULL, hpt370_bm_read, &dev->func[1]);
+
+    if (!dev->onboard) {
+        rom_init(&dev->bios_rom, HPT370_BIOS_FILE,
+                 0x000d0000, dev->rom_bar_size, dev->rom_bar_size - 1, 0, MEM_MAPPING_EXTERNAL);
+        mem_mapping_disable(&dev->bios_rom.mapping);
+    }
 
     ide_set_bus_master(2, hpt370_bus_master_dma_0, hpt370_set_irq_0, dev);
     ide_set_bus_master(3, hpt370_bus_master_dma_1, hpt370_set_irq_1, dev);
@@ -461,4 +497,21 @@ const device_t ide_hpt370_ter_qua_onboard_device = {
     .init          = hpt370_init,
     .close         = hpt370_close,
     .reset         = hpt370_reset
+};
+
+static int
+hpt370_available(void)
+{
+    return rom_present(HPT370_BIOS_FILE);
+}
+
+const device_t ide_abit_hotrod100pro_device = {
+    .name          = "ABIT Hot Rod 100 Pro",
+    .internal_name = "ide_abit_hotrod100pro",
+    .flags         = DEVICE_PCI,
+    .local         = HPT370_ROM_BAR_64K | HPT370_ADDON,
+    .init          = hpt370_init,
+    .close         = hpt370_close,
+    .reset         = hpt370_reset,
+    .available     = hpt370_available
 };
