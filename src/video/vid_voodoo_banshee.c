@@ -43,6 +43,7 @@
 #include <86box/vid_svga.h>
 #include <86box/vid_svga_render.h>
 #include <86box/vid_voodoo_common.h>
+#include <86box/vid_voodoo_3500_tuner.h>
 #include <86box/vid_voodoo_display.h>
 #include <86box/vid_voodoo_fb.h>
 #include <86box/vid_voodoo_fifo.h>
@@ -160,7 +161,7 @@ typedef struct banshee_t {
 
     bool chroma_key_enabled;
 
-    void *i2c, *i2c_ddc, *ddc;
+    void *i2c, *i2c_ddc, *ddc, *tuner;
 } banshee_t;
 
 enum {
@@ -3525,6 +3526,16 @@ banshee_init_common(const device_t *info, const char *fn, const int has_sgram,
     banshee->i2c_ddc = i2c_gpio_init("ddc_voodoo_banshee");
     banshee->ddc     = ddc_init(i2c_gpio_get_bus(banshee->i2c_ddc));
 
+    if (type == TYPE_V3_3500) {
+        const char *bios = device_get_config_bios("bios");
+        const char *rf_channels = device_get_config_int("rf_source") ?
+                                  device_get_config_string("rf_channels") : "";
+        const int standard = (bios && strstr(bios, "pal")) ?
+                             VOODOO_3500_TUNER_PAL : VOODOO_3500_TUNER_NTSC;
+        banshee->tuner = voodoo_3500_tuner_init(i2c_gpio_get_bus(banshee->i2c), standard,
+                                                rf_channels);
+    }
+
     banshee->svga.conv_16to32 = banshee_conv_16to32;
 
     switch (type) {
@@ -3739,6 +3750,7 @@ banshee_close(void *priv)
 
     voodoo_card_close(banshee->voodoo);
     svga_close(&banshee->svga);
+    voodoo_3500_tuner_close(banshee->tuner);
     ddc_close(banshee->ddc);
     i2c_gpio_close(banshee->i2c_ddc);
     i2c_gpio_close(banshee->i2c);
@@ -4262,6 +4274,54 @@ static const device_config_t voodoo_3_3500_agp_config[] = {
             },
             { .files_no = 0 }
         },
+    },
+    {
+        .name           = "rf_source",
+        .description    = "RF source",
+        .type           = CONFIG_SELECTION,
+        .default_string = NULL,
+        .default_int    = 0,
+        .file_filter    = NULL,
+        .spinner        = { 0 },
+        .selection      = {
+            { .description = "Disconnected", .value = 0 },
+            { .description = "HDHomeRun", .value = 1 },
+            { .description = "", .value = 0 }
+        },
+        .bios           = { { 0 } }
+    },
+    {
+        .name           = "hdhomerun_device",
+        .description    = "HDHomeRun device ID or address",
+        .type           = CONFIG_STRING,
+        .default_string = "",
+        .default_int    = 0,
+        .file_filter    = NULL,
+        .spinner        = { 0 },
+        .selection      = { { 0 } },
+        .bios           = { { 0 } }
+    },
+    {
+        .name           = "rf_channels",
+        .description    = "Cached RF channel centers (MHz)",
+        .type           = CONFIG_STRING,
+        .default_string = "",
+        .default_int    = 0,
+        .file_filter    = NULL,
+        .spinner        = { 0 },
+        .selection      = { { 0 } },
+        .bios           = { { 0 } }
+    },
+    {
+        .name           = "rf_channel_map",
+        .description    = "RF channel map",
+        .type           = CONFIG_STRING,
+        .default_string = "[]",
+        .default_int    = 0,
+        .file_filter    = NULL,
+        .spinner        = { 0 },
+        .selection      = { { 0 } },
+        .bios           = { { 0 } }
     },
     {
         .name           = "bilinear",

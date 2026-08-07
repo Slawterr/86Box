@@ -31,8 +31,25 @@
 #include <QLabel>
 #include <QDir>
 #include <QSettings>
+#include <QSignalBlocker>
 #include <QStringBuilder>
 #include <QCollator>
+#include <QEventLoop>
+#include <QHeaderView>
+#include <QHostAddress>
+#include <QInputDialog>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QMessageBox>
+#include <QNetworkAccessManager>
+#include <QNetworkReply>
+#include <QNetworkRequest>
+#include <QNetworkInterface>
+#include <QSet>
+#include <QTableWidget>
+#include <QTimer>
+#include <QUrl>
 
 extern "C" {
 #include <86box/86box.h>
@@ -68,6 +85,272 @@ DeviceConfig::DeviceConfig(QWidget *parent)
 DeviceConfig::~DeviceConfig()
 {
     delete ui;
+}
+
+static double
+voodoo3500CableCenterMHz(int channel)
+{
+    if ((channel >= 2) && (channel <= 4))
+        return 55.25 + ((channel - 2) * 6.0);
+    if ((channel >= 5) && (channel <= 6))
+        return 77.25 + ((channel - 5) * 6.0);
+    if ((channel >= 7) && (channel <= 13))
+        return 175.25 + ((channel - 7) * 6.0);
+    if ((channel >= 14) && (channel <= 22))
+        return 121.25 + ((channel - 14) * 6.0);
+    if ((channel >= 23) && (channel <= 94))
+        return 217.25 + ((channel - 23) * 6.0);
+    if ((channel >= 95) && (channel <= 99))
+        return 91.25 + ((channel - 95) * 6.0);
+    if ((channel >= 100) && (channel <= 125))
+        return 649.25 + ((channel - 100) * 6.0);
+    return 0.0;
+}
+
+static void
+setupVoodoo3500TunerConfig(DeviceConfig *dialog)
+{
+    auto *deviceEdit = dialog->findChild<QLineEdit *>("hdhomerun_device");
+    auto *frequenciesEdit = dialog->findChild<QLineEdit *>("rf_channels");
+    auto *mapEdit = dialog->findChild<QLineEdit *>("rf_channel_map");
+    if (!deviceEdit || !frequenciesEdit || !mapEdit)
+        return;
+
+    auto *form = dialog->findChild<QFormLayout *>("formLayout");
+    if (auto *label = form->labelForField(frequenciesEdit))
+        label->setVisible(false);
+    if (auto *label = form->labelForField(mapEdit))
+        label->setVisible(false);
+    frequenciesEdit->setVisible(false);
+    mapEdit->setVisible(false);
+
+    auto *loadButton = new QPushButton(DeviceConfig::tr("Load HDHomeRun channels"), dialog);
+    auto *discoverButton = new QPushButton(DeviceConfig::tr("Discover HDHomeRun devices"), dialog);
+    auto *table = new QTableWidget(dialog);
+    table->setObjectName("hdhomerun_channels");
+    table->setColumnCount(7);
+    table->setHorizontalHeaderLabels({ DeviceConfig::tr("Enabled"), DeviceConfig::tr("Guide"),
+                                       DeviceConfig::tr("Name"), DeviceConfig::tr("RF channel"),
+                                       DeviceConfig::tr("Center (MHz)"), DeviceConfig::tr("Status"),
+                                       DeviceConfig::tr("Stream URL") });
+    table->horizontalHeader()->setSectionResizeMode(0, QHeaderView::ResizeToContents);
+    table->horizontalHeader()->setSectionResizeMode(1, QHeaderView::ResizeToContents);
+    table->horizontalHeader()->setSectionResizeMode(2, QHeaderView::ResizeToContents);
+    table->horizontalHeader()->setSectionResizeMode(3, QHeaderView::ResizeToContents);
+    table->horizontalHeader()->setSectionResizeMode(4, QHeaderView::ResizeToContents);
+    table->horizontalHeader()->setSectionResizeMode(5, QHeaderView::ResizeToContents);
+    table->horizontalHeader()->setSectionResizeMode(6, QHeaderView::Stretch);
+    table->setMinimumSize(760, 260);
+    table->setAlternatingRowColors(true);
+    table->setSelectionBehavior(QAbstractItemView::SelectRows);
+
+    auto populateTable = [table](const QJsonArray &channels) {
+        const QSignalBlocker blocker(table);
+        table->setRowCount(0);
+        for (const auto &value : channels) {
+            const QJsonObject channel = value.toObject();
+            const int row = table->rowCount();
+            table->insertRow(row);
+
+            auto *enabled = new QTableWidgetItem;
+            enabled->setFlags((enabled->flags() | Qt::ItemIsUserCheckable) & ~Qt::ItemIsEditable);
+            enabled->setCheckState(channel.value("enabled").toBool(true) ? Qt::Checked : Qt::Unchecked);
+            table->setItem(row, 0, enabled);
+            table->setItem(row, 1, new QTableWidgetItem(channel.value("guide").toString()));
+            table->setItem(row, 2, new QTableWidgetItem(channel.value("name").toString()));
+            table->setItem(row, 3, new QTableWidgetItem(QString::number(channel.value("rfChannel").toInt())));
+            table->setItem(row, 4, new QTableWidgetItem(QString::number(channel.value("frequencyMHz").toDouble(), 'f', 3)));
+            table->setItem(row, 5, new QTableWidgetItem(channel.value("status").toString()));
+            table->setItem(row, 6, new QTableWidgetItem(channel.value("url").toString()));
+        }
+    };
+
+    auto saveTable = [table, frequenciesEdit, mapEdit]() {
+        QJsonArray channels;
+        QStringList enabledFrequencies;
+        for (int row = 0; row < table->rowCount(); row++) {
+            QJsonObject channel;
+            const bool enabled = table->item(row, 0)->checkState() == Qt::Checked;
+            const double frequency = table->item(row, 4)->text().toDouble();
+            channel["enabled"] = enabled;
+            channel["guide"] = table->item(row, 1)->text();
+            channel["name"] = table->item(row, 2)->text();
+            channel["rfChannel"] = table->item(row, 3)->text().toInt();
+            channel["frequencyMHz"] = frequency;
+            channel["status"] = table->item(row, 5)->text();
+            channel["url"] = table->item(row, 6)->text();
+            channels.append(channel);
+            if (enabled && (frequency > 0.0))
+                enabledFrequencies.append(QString::number(frequency, 'f', 3));
+        }
+        mapEdit->setText(QString::fromUtf8(QJsonDocument(channels).toJson(QJsonDocument::Compact)));
+        frequenciesEdit->setText(enabledFrequencies.join(','));
+    };
+
+    const QJsonDocument saved = QJsonDocument::fromJson(mapEdit->text().toUtf8());
+    if (saved.isArray())
+        populateTable(saved.array());
+
+    QObject::connect(table, &QTableWidget::itemChanged, dialog, [saveTable](QTableWidgetItem *) { saveTable(); });
+    QObject::connect(discoverButton, &QPushButton::clicked, dialog, [dialog, deviceEdit, loadButton]() {
+        QNetworkAccessManager manager;
+        QEventLoop loop;
+        QTimer timeout;
+        QSet<QString> requestedHosts;
+        QMap<QString, QString> devices;
+        int pending = 0;
+
+        auto requestHost = [&](const QString &host) {
+            if (requestedHosts.contains(host))
+                return;
+            requestedHosts.insert(host);
+
+            QNetworkRequest request(QUrl(QStringLiteral("http://%1/discover.json").arg(host)));
+            request.setTransferTimeout(1500);
+            QNetworkReply *reply = manager.get(request);
+            pending++;
+            QObject::connect(reply, &QNetworkReply::finished, &loop, [&, reply, host]() {
+                if (reply->error() == QNetworkReply::NoError) {
+                    const QJsonDocument document = QJsonDocument::fromJson(reply->readAll());
+                    if (document.isObject()) {
+                        const QJsonObject device = document.object();
+                        const QString deviceId = device.value("DeviceID").toString();
+                        const QString model = device.value("ModelNumber").toString();
+                        const QString friendlyName = device.value("FriendlyName").toString("HDHomeRun");
+                        QString baseUrl = device.value("BaseURL").toString();
+                        if (baseUrl.isEmpty())
+                            baseUrl = QStringLiteral("http://%1").arg(host);
+                        if (!deviceId.isEmpty() || !model.isEmpty()) {
+                            const QString label = QStringLiteral("%1 — %2 — %3")
+                                                      .arg(friendlyName,
+                                                           model.isEmpty() ? DeviceConfig::tr("Unknown model") : model,
+                                                           deviceId.isEmpty() ? host : deviceId);
+                            devices.insert(label, baseUrl);
+                        }
+                    }
+                }
+                reply->deleteLater();
+                if ((--pending == 0) && loop.isRunning())
+                    loop.quit();
+            });
+        };
+
+        /* Modern HDHomeRun units expose discover.json. Probe each local /24 in
+         * parallel; this also works when multicast discovery is blocked by a
+         * host firewall or wireless access point. */
+        int subnetCount = 0;
+        QSet<quint32> subnets;
+        for (const QNetworkInterface &interface : QNetworkInterface::allInterfaces()) {
+            if (!(interface.flags() & QNetworkInterface::IsUp) ||
+                !(interface.flags() & QNetworkInterface::IsRunning) ||
+                (interface.flags() & QNetworkInterface::IsLoopBack))
+                continue;
+            for (const QNetworkAddressEntry &entry : interface.addressEntries()) {
+                if (entry.ip().protocol() != QAbstractSocket::IPv4Protocol)
+                    continue;
+                const quint32 subnet = entry.ip().toIPv4Address() & 0xffffff00U;
+                if (subnets.contains(subnet) || (++subnetCount > 4))
+                    continue;
+                subnets.insert(subnet);
+                for (quint32 host = 1; host < 255; host++)
+                    requestHost(QHostAddress(subnet | host).toString());
+            }
+        }
+        requestHost(QStringLiteral("hdhomerun.local"));
+
+        timeout.setSingleShot(true);
+        QObject::connect(&timeout, &QTimer::timeout, &loop, &QEventLoop::quit);
+        timeout.start(2500);
+        if (pending > 0)
+            loop.exec();
+
+        if (devices.isEmpty()) {
+            QMessageBox::information(dialog, DeviceConfig::tr("HDHomeRun discovery"),
+                                     DeviceConfig::tr("No HDHomeRun devices were found on the local network. You can still enter an address manually."));
+            return;
+        }
+
+        bool accepted = false;
+        const QString selected = QInputDialog::getItem(dialog, DeviceConfig::tr("Select HDHomeRun"),
+                                                       DeviceConfig::tr("Device:"), devices.keys(), 0, false, &accepted);
+        if (accepted && !selected.isEmpty()) {
+            deviceEdit->setText(devices.value(selected));
+            loadButton->click();
+        }
+    });
+    QObject::connect(loadButton, &QPushButton::clicked, dialog, [dialog, deviceEdit, populateTable, saveTable]() {
+        QString host = deviceEdit->text().trimmed();
+        if (host.isEmpty()) {
+            QMessageBox::warning(dialog, DeviceConfig::tr("HDHomeRun"),
+                                 DeviceConfig::tr("Enter the HDHomeRun IP address or host name first."));
+            return;
+        }
+        if (!host.startsWith("http://", Qt::CaseInsensitive) && !host.startsWith("https://", Qt::CaseInsensitive))
+            host.prepend("http://");
+
+        QUrl base(host);
+        QUrl lineup(base);
+        lineup.setPath("/lineup.json");
+        QNetworkAccessManager manager;
+        QNetworkReply *reply = manager.get(QNetworkRequest(lineup));
+        QEventLoop loop;
+        QTimer timeout;
+        timeout.setSingleShot(true);
+        QObject::connect(reply, &QNetworkReply::finished, &loop, &QEventLoop::quit);
+        QObject::connect(&timeout, &QTimer::timeout, &loop, &QEventLoop::quit);
+        timeout.start(5000);
+        loop.exec();
+
+        if (!reply->isFinished() || (reply->error() != QNetworkReply::NoError)) {
+            reply->abort();
+            QMessageBox::warning(dialog, DeviceConfig::tr("HDHomeRun"),
+                                 DeviceConfig::tr("Unable to retrieve the channel lineup from %1.").arg(lineup.toString()));
+            reply->deleteLater();
+            return;
+        }
+
+        const QJsonDocument document = QJsonDocument::fromJson(reply->readAll());
+        reply->deleteLater();
+        if (!document.isArray()) {
+            QMessageBox::warning(dialog, DeviceConfig::tr("HDHomeRun"),
+                                 DeviceConfig::tr("The tuner returned an invalid channel lineup."));
+            return;
+        }
+
+        QJsonArray mapped;
+        int rfChannel = 2;
+        for (const auto &value : document.array()) {
+            const QJsonObject source = value.toObject();
+            const bool drm = source.value("DRM").toBool(false);
+            while ((rfChannel <= 125) && (voodoo3500CableCenterMHz(rfChannel) == 0.0))
+                rfChannel++;
+
+            QJsonObject channel;
+            channel["enabled"] = !drm && (rfChannel <= 125);
+            channel["guide"] = source.value("GuideNumber").toString();
+            channel["name"] = source.value("GuideName").toString();
+            channel["rfChannel"] = (rfChannel <= 125) ? rfChannel : 0;
+            channel["frequencyMHz"] = (rfChannel <= 125) ? voodoo3500CableCenterMHz(rfChannel) : 0.0;
+            channel["status"] = drm ? DeviceConfig::tr("DRM (unavailable)") :
+                                ((rfChannel <= 125) ? DeviceConfig::tr("Available") : DeviceConfig::tr("Unassigned"));
+            channel["url"] = source.value("URL").toString();
+            mapped.append(channel);
+            if (rfChannel <= 125)
+                rfChannel++;
+        }
+        populateTable(mapped);
+        saveTable();
+    });
+
+    auto *layout = qobject_cast<QVBoxLayout *>(dialog->layout());
+    auto *buttonRow = new QWidget(dialog);
+    auto *buttonLayout = new QHBoxLayout(buttonRow);
+    buttonLayout->setContentsMargins(0, 0, 0, 0);
+    buttonLayout->addWidget(discoverButton);
+    buttonLayout->addWidget(loadButton);
+    layout->insertWidget(layout->count() - 2, buttonRow);
+    layout->insertWidget(layout->count() - 2, table);
+    dialog->setMinimumWidth(820);
 }
 
 static QMap<QString, QString>
@@ -462,7 +745,12 @@ DeviceConfig::ConfigureDevice(const _device_ *device, int instance, Settings *se
 
     dc.ProcessConfig(&device_context, config, false);
 
-    dc.setFixedSize(dc.minimumSizeHint());
+    if (!strcmp(device->internal_name, "voodoo3_3500_agp")) {
+        setupVoodoo3500TunerConfig(&dc);
+        dc.resize(dc.minimumSizeHint());
+    } else {
+        dc.setFixedSize(dc.minimumSizeHint());
+    }
 
     if (dc.exec() == QDialog::Accepted) {
         if (config == NULL)
