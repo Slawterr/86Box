@@ -20,12 +20,10 @@
 #define HAVE_STDARG_H
 #include <86box/86box.h>
 #include <86box/device.h>
-#include <86box/award_lh5.h>
 #include <86box/hdc.h>
 #include <86box/hdc_ide.h>
 #include <86box/hdc_ide_sff8038i.h>
 #include <86box/io.h>
-#include <86box/mem.h>
 #include <86box/pci.h>
 #include <86box/plat_unused.h>
 #include "hdc_ide_hpt370.h"
@@ -44,9 +42,7 @@ struct hpt370_t {
     uint16_t    bm_base[2];
     hpt370_func_t func[2];
     uint32_t    rom_bar_size;
-    uint8_t    *rom_image;
     uint16_t     oscillator_reads;
-    mem_mapping_t rom_mapping;
 };
 
 static void    hpt370_pci_write(int func, int addr, int len, uint8_t val, void *priv);
@@ -54,21 +50,6 @@ static uint8_t hpt370_pci_read(int func, int addr, int len, void *priv);
 static uint8_t hpt370_io_read(uint16_t port, void *priv);
 static void    hpt370_io_write(uint16_t port, uint8_t val, void *priv);
 static uint8_t hpt370_bm_read(uint16_t port, uint8_t val, void *priv);
-
-static void
-hpt370_rom_mapping_update(hpt370_t *dev)
-{
-    uint32_t rom_addr;
-
-
-    rom_addr = dev->regs[0][0x30] | (dev->regs[0][0x31] << 8) |
-               (dev->regs[0][0x32] << 16) | (dev->regs[0][0x33] << 24);
-
-    if (dev->rom_image && hdc_onboard_enabled && (dev->regs[0][0x04] & 0x02) && (rom_addr & 0x01))
-        mem_mapping_set_addr(&dev->rom_mapping, rom_addr & ~(dev->rom_bar_size - 1), dev->rom_bar_size);
-    else
-        mem_mapping_disable(&dev->rom_mapping);
-}
 
 static void
 hpt370_rom_bar_write(hpt370_t *dev, int addr, uint8_t val)
@@ -85,70 +66,6 @@ hpt370_rom_bar_write(hpt370_t *dev, int addr, uint8_t val)
     dev->regs[0][0x31] = (rom_addr >> 8) & 0xff;
     dev->regs[0][0x32] = (rom_addr >> 16) & 0xff;
     dev->regs[0][0x33] = (rom_addr >> 24) & 0xff;
-    hpt370_rom_mapping_update(dev);
-}
-
-static int
-hpt370_header_contains(const uint8_t *header, size_t length, const char *text)
-{
-    const size_t text_len = strlen(text);
-
-    for (size_t i = 0; i + text_len <= length; i++)
-        if (!memcmp(header + i, text, text_len))
-            return 1;
-    return 0;
-}
-
-static int
-hpt370_load_award_rom(hpt370_t *dev)
-{
-    const size_t bios_size = biosmask + 1;
-
-    for (size_t pos = 0; pos + 32 < bios_size; pos++) {
-        const size_t header_size = rom[pos] + 2;
-        uint32_t packed_size;
-        uint32_t original_size;
-        uint32_t declared_size;
-        uint8_t checksum = 0;
-
-        if (header_size < 32 || pos + header_size > bios_size || memcmp(rom + pos + 2, "-lh5-", 5))
-            continue;
-        if (!hpt370_header_contains(rom + pos + 22, header_size - 22, "h37095b.bin"))
-            continue;
-
-        packed_size = rom[pos + 7] | (rom[pos + 8] << 8) | (rom[pos + 9] << 16) | (rom[pos + 10] << 24);
-        original_size = rom[pos + 11] | (rom[pos + 12] << 8) | (rom[pos + 13] << 16) | (rom[pos + 14] << 24);
-        if (pos + header_size + packed_size > bios_size || original_size > dev->rom_bar_size)
-            return 0;
-
-        dev->rom_image = malloc(dev->rom_bar_size);
-        if (!dev->rom_image)
-            return 0;
-        memset(dev->rom_image, 0xff, dev->rom_bar_size);
-        if (!award_lh5_decode(rom + pos + header_size, packed_size, dev->rom_image, original_size)) {
-            free(dev->rom_image);
-            dev->rom_image = NULL;
-            return 0;
-        }
-        if (dev->rom_image[0] != 0x55 || dev->rom_image[1] != 0xaa)
-            return 0;
-
-        declared_size = dev->rom_image[2] << 9;
-        if (!declared_size || declared_size > dev->rom_bar_size || original_size > declared_size)
-            return 0;
-
-        /*
-         * Award stores only the initialized portion of the option ROM module.
-         * The remainder of its declared image is BSS/workspace and must start
-         * at zero; 0xff here makes the HPT BIOS treat every probe state as set.
-         */
-        memset(dev->rom_image + original_size, 0x00, declared_size - original_size);
-        for (uint32_t i = 0; i < declared_size; i++)
-            checksum += dev->rom_image[i];
-        dev->rom_image[declared_size - 1] -= checksum;
-        return 1;
-    }
-    return 0;
 }
 
 #ifdef ENABLE_HPT370_LOG
@@ -306,8 +223,7 @@ hpt370_pci_write(int func, int addr, UNUSED(int len), uint8_t val, void *priv)
             dev->regs[func][addr] = val & 0x07;
             hpt370_ide_handler(dev, func);
             hpt370_bm_handler(dev, func);
-            hpt370_rom_mapping_update(dev);
-            break;
+                    break;
         case 0x05:
             dev->regs[func][addr] = val & 0x01;
             break;
@@ -488,7 +404,6 @@ hpt370_reset(void *priv)
     dev->regs[0][0x79] = 0x00;
     hpt370_ide_handler(dev, 0);
     hpt370_ide_handler(dev, 1);
-    hpt370_rom_mapping_update(dev);
 }
 
 void
@@ -502,7 +417,6 @@ hpt370_close(void *priv)
                              hpt370_io_read, NULL, NULL,
                              hpt370_io_write, NULL, NULL, &dev->func[func]);
 
-    free(dev->rom_image);
     free(dev);
 }
 
@@ -511,13 +425,12 @@ hpt370_init(UNUSED(const device_t *info))
 {
     hpt370_t *dev = (hpt370_t *) calloc(1, sizeof(hpt370_t));
 
+    /*
+     * The on-board option ROM is a module of the motherboard Award BIOS.
+     * Expose the PCI expansion ROM BAR size, but leave firmware loading to
+     * the emulated system BIOS instead of creating a second ROM mapping.
+     */
     dev->rom_bar_size = (info->local == HPT370_ROM_BAR_64K) ? 0x00010000 : 0x00008000;
-    hpt370_load_award_rom(dev);
-    hpt370_log("HPT370: embedded Award option ROM %s (%u-byte PCI window)\n",
-               dev->rom_image ? "loaded" : "not found", dev->rom_bar_size);
-    mem_mapping_add(&dev->rom_mapping, 0, 0, NULL, NULL, NULL, NULL, NULL, NULL,
-                    dev->rom_image, MEM_MAPPING_EXTERNAL | MEM_MAPPING_ROM, dev);
-    mem_mapping_disable(&dev->rom_mapping);
     dev->func[0].dev = dev;
     dev->func[0].id  = 0;
     dev->func[1].dev = dev;
