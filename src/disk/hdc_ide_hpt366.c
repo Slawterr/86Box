@@ -29,7 +29,9 @@
 #include <86box/plat_unused.h>
 #include <86box/rom.h>
 
-#define HPT366_BIOS_FILE "roms/machines/be6ii/rom_hpt_125.bin"
+#define HPT366_ONBOARD   0x01
+
+#define HPT366_BIOS_FILE "roms/hdd/hotrod66/hotrod66_125.bin"
 #define HPT366_BIOS_SIZE 0x00008000
 
 typedef struct hpt366_t hpt366_t;
@@ -40,6 +42,7 @@ typedef struct hpt366_func_t {
 } hpt366_func_t;
 
 struct hpt366_t {
+    uint8_t     local;
     uint8_t     pci_slot;
     uint8_t     regs[2][256];
     sff8038i_t *bm[2];
@@ -76,8 +79,9 @@ hpt366_log(const char *fmt, ...)
 static void
 hpt366_ide_handler(hpt366_t *dev, int func)
 {
-    const int channel = func + 2;
+    const int channel         = func + 2;
     const int channel_enabled = dev->regs[0][0x50] & (0x10 << func);
+    const int dev_enabled     = hdc_onboard_enabled || !(dev->local & HPT366_ONBOARD);
     uint16_t  main;
     uint16_t  side;
 
@@ -89,7 +93,7 @@ hpt366_ide_handler(hpt366_t *dev, int func)
     ide_set_base(channel, main);
     ide_set_side(channel, side);
 
-    if (hdc_onboard_enabled && channel_enabled && (dev->regs[func][0x04] & 0x01) && main && side)
+    if (dev_enabled && channel_enabled && (dev->regs[func][0x04] & 0x01) && main && side)
         ide_handlers(channel, 1);
 
     hpt366_log("HPT366 function %i: IDE %i at %04X/%04X\n", func, channel, main, side);
@@ -99,7 +103,8 @@ static void
 hpt366_bm_handler(hpt366_t *dev, int func)
 {
     const uint16_t base = dev->regs[func][0x21] << 8;
-    const int      enabled = hdc_onboard_enabled && ((dev->regs[func][0x04] & 0x05) == 0x05);
+    const int      dev_enabled = hdc_onboard_enabled || !(dev->local & HPT366_ONBOARD);
+    const int      enabled     = dev_enabled && ((dev->regs[func][0x04] & 0x05) == 0x05);
 
     if (dev->bm_base[func])
         io_removehandler(dev->bm_base[func] + 0x20, 0x5c,
@@ -109,7 +114,7 @@ hpt366_bm_handler(hpt366_t *dev, int func)
     sff_bus_master_handler(dev->bm[func], enabled, base);
 
     dev->bm_base[func] = base;
-    if (hdc_onboard_enabled && (dev->regs[func][0x04] & 0x01) && base)
+    if (dev_enabled && (dev->regs[func][0x04] & 0x01) && base)
         io_sethandler(base + 0x20, 0x5c,
                       hpt366_io_read, NULL, NULL,
                       hpt366_io_write, NULL, NULL, &dev->func[func]);
@@ -156,17 +161,20 @@ hpt366_bm_read(uint16_t port, uint8_t val, void *priv)
 static void
 hpt366_bios_handler(hpt366_t *dev)
 {
-#ifdef NOT_ON_BOARD
-    uint32_t addr = (dev->regs[0][0x30] | (dev->regs[0][0x31] << 8) |
+    uint32_t addr;
+
+    if (dev->local & HPT366_ONBOARD)
+        return;
+
+    addr = (dev->regs[0][0x30] | (dev->regs[0][0x31] << 8) |
                      (dev->regs[0][0x32] << 16) | (dev->regs[0][0x33] << 24));
 
     dev->rom_addr       = addr & 0xffff8000;
 
-    if (hdc_onboard_enabled && (dev->regs[0][0x04] & 0x02) && (addr & 0x01))
+    if ((dev->regs[0][0x04] & 0x02) && (addr & 0x01))
         mem_mapping_set_addr(&dev->bios_rom.mapping, dev->rom_addr, HPT366_BIOS_SIZE);
     else
         mem_mapping_disable(&dev->bios_rom.mapping);
-#endif
 }
 
 static void
@@ -262,9 +270,11 @@ hpt366_pci_write(int func, int addr, UNUSED(int len), uint8_t val, void *priv)
                 dev->regs[0][addr] = val & 0x01;
                 hpt366_bios_handler(dev);
             }
+            break;
+        case 0x31:
         case 0x32:
             if (!func) {
-                dev->regs[0][addr] = val & 0xfe;
+                dev->regs[0][addr] = val;
                 hpt366_bios_handler(dev);
             }
             break;
@@ -374,9 +384,11 @@ hpt366_close(void *priv)
 }
 
 static void *
-hpt366_init(UNUSED(const device_t *info))
+hpt366_init(const device_t *info)
 {
     hpt366_t *dev = (hpt366_t *) calloc(1, sizeof(hpt366_t));
+
+    dev->local = info->local;
 
     dev->func[0].dev = dev;
     dev->func[0].id  = 0;
@@ -384,7 +396,10 @@ hpt366_init(UNUSED(const device_t *info))
     dev->func[1].id  = 1;
 
     device_add(&ide_pci_ter_qua_2ch_device);
-    pci_add_card(PCI_ADD_IDE, hpt366_pci_read, hpt366_pci_write, dev, &dev->pci_slot);
+    if (dev->local & HPT366_ONBOARD)
+        pci_add_card(PCI_ADD_IDE, hpt366_pci_read, hpt366_pci_write, dev, &dev->pci_slot);
+    else
+        pci_add_card(PCI_ADD_NORMAL, hpt366_pci_read, hpt366_pci_write, dev, &dev->pci_slot);
 
     dev->bm[0] = device_add_inst(&sff8038i_device, 3);
     dev->bm[1] = device_add_inst(&sff8038i_device, 4);
@@ -392,11 +407,11 @@ hpt366_init(UNUSED(const device_t *info))
     sff_set_ven_handlers(dev->bm[0], NULL, hpt366_bm_read, &dev->func[0]);
     sff_set_ven_handlers(dev->bm[1], NULL, hpt366_bm_read, &dev->func[1]);
 
-#ifdef NOT_ON_BOARD
-    rom_init(&dev->bios_rom, HPT366_BIOS_FILE,
-             0x000d0000, HPT366_BIOS_SIZE, HPT366_BIOS_SIZE - 1, 0, MEM_MAPPING_EXTERNAL);
-    mem_mapping_disable(&dev->bios_rom.mapping);
-#endif
+    if (!(dev->local & HPT366_ONBOARD)) {
+        rom_init(&dev->bios_rom, HPT366_BIOS_FILE,
+                 0x000d0000, HPT366_BIOS_SIZE, HPT366_BIOS_SIZE - 1, 0, MEM_MAPPING_EXTERNAL);
+        mem_mapping_disable(&dev->bios_rom.mapping);
+    }
 
     ide_set_bus_master(2, hpt366_bus_master_dma_0, hpt366_set_irq_0, dev);
     ide_set_bus_master(3, hpt366_bus_master_dma_1, hpt366_set_irq_1, dev);
@@ -406,11 +421,31 @@ hpt366_init(UNUSED(const device_t *info))
     return dev;
 }
 
+static int
+hpt366_available(void)
+{
+    return (rom_present(HPT366_BIOS_FILE));
+}
+
+const device_t ide_hpt366_ter_qua_device = {
+    .name          = "ABIT Hot Rod 66",
+    .internal_name = "ide_hpt366_ter_qua",
+    .flags         = DEVICE_PCI,
+    .local         = 0,
+    .init          = hpt366_init,
+    .close         = hpt366_close,
+    .reset         = hpt366_reset,
+    .available     = hpt366_available,
+    .speed_changed = NULL,
+    .force_redraw  = NULL,
+    .config        = NULL
+};
+
 const device_t ide_hpt366_ter_qua_onboard_device = {
     .name          = "HighPoint HPT366 (Tertiary and Quaternary) On-Board",
     .internal_name = "ide_hpt366_ter_qua_onboard",
     .flags         = DEVICE_PCI,
-    .local         = 0,
+    .local         = HPT366_ONBOARD,
     .init          = hpt366_init,
     .close         = hpt366_close,
     .reset         = hpt366_reset,
