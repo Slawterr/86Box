@@ -860,6 +860,22 @@ const device_t lm78_device = {
     .config        = NULL
 };
 
+/* National Semiconductor LM79 on ISA and SMBus.
+   The LM79 is register-compatible with the LM78 for the functionality
+   currently emulated here. */
+const device_t lm79_device = {
+    .name          = "National Semiconductor LM79 Hardware Monitor",
+    .internal_name = "lm79",
+    .flags         = DEVICE_ISA,
+    .local         = 0x290 | LM78_I2C,
+    .init          = lm78_init,
+    .close         = lm78_close,
+    .reset         = lm78_reset,
+    .available     = NULL,
+    .speed_changed = NULL,
+    .force_redraw  = NULL,
+    .config        = NULL
+};
 /* Winbond W83781D on ISA and SMBus. */
 const device_t w83781d_device = {
     .name          = "Winbond W83781D Hardware Monitor",

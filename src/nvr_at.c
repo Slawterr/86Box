@@ -636,7 +636,7 @@ nvr_reg_write(uint16_t reg, uint8_t val, void *priv)
             break;
 
         case 0x39:
-            if (machines[machine].init == machine_at_bx6_init)
+            if (machines[machine].init == machine_at_abit_bx6_init)
                 nvr_reg_common_write(reg, val | 0x08, nvr, local);
             else
                 nvr_reg_common_write(reg, val, nvr, local);
@@ -804,7 +804,7 @@ nvr_read(uint16_t addr, void *priv)
             case 0x39:
                 if (!(local->lock[local->addr[addr_id]] & 0x02)) {
                     ret = nvr->regs[local->addr[addr_id]];
-                    if (machines[machine].init == machine_at_bx6_init)
+                    if (machines[machine].init == machine_at_abit_bx6_init)
                         ret |= 0x08;
                 }
                 break;
@@ -1164,8 +1164,8 @@ nvr_at_init(const device_t *info)
     if (nvr->is_new && (machines[machine].init == machine_at_spitfire_init))
         local->flags |= FLAG_SPITFIRE_HACK;
 
-    if (nvr->is_new && (machines[machine].init == machine_at_bx6_init))
-        local->flags |= FLAG_BX6_HACK;
+    if (nvr->is_new && (machines[machine].init == machine_at_abit_bx6_init))
+        local->flags |= FLAG_ABIT_BX6_SOFTMENU;
 
     local->read_addr = 1;
 
@@ -1206,7 +1206,7 @@ nvr_at_init(const device_t *info)
     if (nvr->is_new && (local->flags & FLAG_SPITFIRE_HACK))
         nvr->regs[0x33] = nvr->regs[0x34] = 0xff;
 
-    if (nvr->is_new && (local->flags & FLAG_BX6_HACK))
+    if (nvr->is_new && (local->flags & FLAG_ABIT_BX6_SOFTMENU))
         nvr->regs[0x39] = 0x09;
 
     return nvr;
