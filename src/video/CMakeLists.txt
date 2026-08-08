@@ -164,6 +164,7 @@ endif()
 # 3Dfx Voodoo
 add_library(voodoo OBJECT
     vid_voodoo.c
+    vid_voodoo_3500_multimedia.c
     vid_voodoo_3500_tuner.c
     vid_voodoo_banshee.c
     vid_voodoo_banshee_blitter.c

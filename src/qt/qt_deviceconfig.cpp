@@ -745,7 +745,7 @@ DeviceConfig::ConfigureDevice(const _device_ *device, int instance, Settings *se
 
     dc.ProcessConfig(&device_context, config, false);
 
-    if (!strcmp(device->internal_name, "voodoo3_3500_agp")) {
+    if (!strcmp(device->internal_name, "voodoo3_3500_tv_agp")) {
         setupVoodoo3500TunerConfig(&dc);
         dc.resize(dc.minimumSizeHint());
     } else {

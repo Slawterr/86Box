@@ -43,6 +43,7 @@
 #include <86box/vid_svga.h>
 #include <86box/vid_svga_render.h>
 #include <86box/vid_voodoo_common.h>
+#include <86box/vid_voodoo_3500_multimedia.h>
 #include <86box/vid_voodoo_3500_tuner.h>
 #include <86box/vid_voodoo_display.h>
 #include <86box/vid_voodoo_fb.h>
@@ -87,6 +88,7 @@ enum {
     TYPE_V3_2000,
     TYPE_V3_3000,
     TYPE_V3_3500,
+    TYPE_V3_3500_TV,
     TYPE_V3_3500_COMPAQ,
     TYPE_V3_3500_SI,
     TYPE_VELOCITY100,
@@ -3526,13 +3528,13 @@ banshee_init_common(const device_t *info, const char *fn, const int has_sgram,
     banshee->i2c_ddc = i2c_gpio_init("ddc_voodoo_banshee");
     banshee->ddc     = ddc_init(i2c_gpio_get_bus(banshee->i2c_ddc));
 
-    if (type == TYPE_V3_3500) {
+    if (type == TYPE_V3_3500_TV) {
         const char *bios = device_get_config_bios("bios");
         const char *rf_channels = device_get_config_int("rf_source") ?
                                   device_get_config_string("rf_channels") : "";
         const int standard = (bios && strstr(bios, "pal")) ?
                              VOODOO_3500_TUNER_PAL : VOODOO_3500_TUNER_NTSC;
-        banshee->tuner = voodoo_3500_tuner_init(i2c_gpio_get_bus(banshee->i2c), standard,
+        banshee->tuner = voodoo_3500_multimedia_init(i2c_gpio_get_bus(banshee->i2c), standard,
                                                 rf_channels);
     }
 
@@ -3584,6 +3586,7 @@ banshee_init_common(const device_t *info, const char *fn, const int has_sgram,
             banshee->pci_regs[0x2f] = 0x00;
             break;
 
+        case TYPE_V3_3500_TV:
         case TYPE_V3_3500:
             banshee->pci_regs[0x2c] = 0x1a;
             banshee->pci_regs[0x2d] = 0x12;
@@ -3750,7 +3753,7 @@ banshee_close(void *priv)
 
     voodoo_card_close(banshee->voodoo);
     svga_close(&banshee->svga);
-    voodoo_3500_tuner_close(banshee->tuner);
+    voodoo_3500_multimedia_close(banshee->tuner);
     ddc_close(banshee->ddc);
     i2c_gpio_close(banshee->i2c_ddc);
     i2c_gpio_close(banshee->i2c);
@@ -4223,27 +4226,7 @@ static const device_config_t voodoo_3_3500_agp_config[] = {
         .spinner        = { 0 },
         .bios           = {
             {
-                .name          = "3dfx Voodoo3 3500 TV (NTSC)",
-                .internal_name = "voodoo3_3500_agp_ntsc",
-                .bios_type     = BIOS_NORMAL,
-                .files_no      = 1,
-                .local         = TYPE_V3_3500,
-                .size          = 32768,
-                .flags         = 0,
-                .files         = { ROM_VOODOO3_3500_AGP_NTSC, "" }
-            },
-            {
-                .name          = "3dfx Voodoo3 3500 TV (PAL)",
-                .internal_name = "voodoo3_3500_agp_pal",
-                .bios_type     = BIOS_NORMAL,
-                .files_no      = 1,
-                .local         = TYPE_V3_3500,
-                .size          = 32768,
-                .flags         = 0,
-                .files         = { ROM_VOODOO3_3500_AGP_PAL, "" }
-            },
-            {
-                .name          = "Compaq Voodoo3 3500 TV",
+                .name          = "Compaq Voodoo3 3500",
                 .internal_name = "compaq_voodoo3_3500_agp",
                 .bios_type     = BIOS_NORMAL,
                 .files_no      = 1,
@@ -4271,6 +4254,115 @@ static const device_config_t voodoo_3_3500_agp_config[] = {
                 .size          = 32768,
                 .flags         = 0,
                 .files         = { ROM_VOODOO3_3500_SI_AGP, "" }
+            },
+            { .files_no = 0 }
+        },
+    },
+    {
+        .name           = "bilinear",
+        .description    = "Bilinear filtering",
+        .type           = CONFIG_BINARY,
+        .default_string = NULL,
+        .default_int    = 1,
+        .file_filter    = NULL,
+        .spinner        = { 0 },
+        .selection      = { { 0 } },
+        .bios           = { { 0 } }
+    },
+    {
+        .name           = "chromakey",
+        .description    = "Video chroma-keying",
+        .type           = CONFIG_BINARY,
+        .default_string = NULL,
+        .default_int    = 1,
+        .file_filter    = NULL,
+        .spinner        = { 0 },
+        .selection      = { { 0 } },
+        .bios           = { { 0 } }
+    },
+    {
+        .name           = "dithersub",
+        .description    = "Dither subtraction",
+        .type           = CONFIG_BINARY,
+        .default_string = NULL,
+        .default_int    = 1,
+        .file_filter    = NULL,
+        .spinner        = { 0 },
+        .selection      = { { 0 } },
+        .bios           = { { 0 } }
+    },
+    {
+        .name           = "dacfilter",
+        .description    = "Screen Filter",
+        .type           = CONFIG_BINARY,
+        .default_string = NULL,
+        .default_int    = 0,
+        .file_filter    = NULL,
+        .spinner        = { 0 },
+        .selection      = { { 0 } },
+        .bios           = { { 0 } }
+    },
+    {
+        .name           = "render_threads",
+        .description    = "Render threads",
+        .type           = CONFIG_SELECTION,
+        .default_string = NULL,
+        .default_int    = 2,
+        .file_filter    = NULL,
+        .spinner        = { 0 },
+        .selection      = {
+            { .description = "1", .value = 1 },
+            { .description = "2", .value = 2 },
+            { .description = "4", .value = 4 },
+            { .description = ""              }
+        },
+        .bios           = { { 0 } }
+    },
+#ifndef NO_CODEGEN
+    {
+        .name           = "recompiler",
+        .description    = "Dynamic Recompiler",
+        .type           = CONFIG_BINARY,
+        .default_string = NULL,
+        .default_int    = 1,
+        .file_filter    = NULL,
+        .spinner        = { 0 },
+        .selection      = { { 0 } },
+        .bios           = { { 0 } }
+    },
+#endif
+    { .name = "", .description = "", .type = CONFIG_END }
+};
+
+static const device_config_t voodoo_3_3500_tv_agp_config[] = {
+    {
+        .name           = "bios",
+        .description    = "Variant",
+        .type           = CONFIG_BIOS,
+        .default_string = "voodoo3_3500_agp_ntsc",
+        .default_int    = 0,
+        .file_filter    = NULL,
+        .spinner        = { 0 },
+        .bios           = {
+            {
+                .name          = "3dfx Voodoo3 3500 TV (NTSC)",
+                .internal_name = "voodoo3_3500_agp_ntsc",
+                .bios_type     = BIOS_NORMAL,
+                .files_no      = 1,
+                .local         = TYPE_V3_3500_TV,
+                .size          = 32768,
+                .flags         = 0,
+                .files         = { ROM_VOODOO3_3500_AGP_NTSC, "" }
+            },
+            {
+                .name          = "3dfx Voodoo3 3500 TV (PAL)",
+                .internal_name = "voodoo3_3500_agp_pal",
+                .bios_type     = BIOS_NORMAL,
+                .files_no      = 1,
+                .local         = TYPE_V3_3500_TV,
+                .size          = 32768,
+                .flags         = 0,
+                .files         = { ROM_VOODOO3_3500_AGP_PAL, "" }
             },
             { .files_no = 0 }
         },
@@ -4543,6 +4635,20 @@ const device_t voodoo_3_3500_agp_device = {
     .speed_changed = banshee_speed_changed,
     .force_redraw  = banshee_force_redraw,
     .config        = voodoo_3_3500_agp_config
+};
+
+const device_t voodoo_3_3500_tv_agp_device = {
+    .name          = "3dfx Voodoo3 3500 TV",
+    .internal_name = "voodoo3_3500_tv_agp",
+    .flags         = DEVICE_AGP | DEVICE_BIOS_ALIAS,
+    .local         = 0,
+    .init          = v3_3500_agp_bios_init,
+    .close         = banshee_close,
+    .reset         = NULL,
+    .available     = NULL,
+    .speed_changed = banshee_speed_changed,
+    .force_redraw  = banshee_force_redraw,
+    .config        = voodoo_3_3500_tv_agp_config
 };
 
 const device_t velocity_100_agp_device = {

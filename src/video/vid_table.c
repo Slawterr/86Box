@@ -206,6 +206,7 @@ video_cards[] = {
     { .device = &voodoo_3_2000_agp_device,                      .flags = VIDEO_FLAG_TYPE_NONE      },
     { .device = &voodoo_3_3000_agp_device,                      .flags = VIDEO_FLAG_TYPE_NONE      },
     { .device = &voodoo_3_3500_agp_device,                      .flags = VIDEO_FLAG_TYPE_NONE      },
+    { .device = &voodoo_3_3500_tv_agp_device,                   .flags = VIDEO_FLAG_TYPE_NONE      },
     { .device = &millennium_ii_agp_device,                      .flags = VIDEO_FLAG_TYPE_SECONDARY },
 #ifdef USE_G100
     { .device = &productiva_g100_device,                        .flags = VIDEO_FLAG_TYPE_SPECIAL   },
@@ -348,8 +349,8 @@ video_cards_migrate[] = {
     { .device = &voodoo_banshee_pci_device,                     .old_internal_name = "ctl3d_banshee_pci"              },
     { .device = &voodoo_banshee_pci_device,                     .old_internal_name = "q3d_raven_pci"                  },
     /* Voodoo 3 3500 AGP */
-    { .device = &voodoo_3_3500_agp_device,                      .old_internal_name = "voodoo3_3500_agp_ntsc"          },
-    { .device = &voodoo_3_3500_agp_device,                      .old_internal_name = "voodoo3_3500_agp_pal"           },
+    { .device = &voodoo_3_3500_tv_agp_device,                   .old_internal_name = "voodoo3_3500_agp_ntsc"          },
+    { .device = &voodoo_3_3500_tv_agp_device,                   .old_internal_name = "voodoo3_3500_agp_pal"           },
     { .device = &voodoo_3_3500_agp_device,                      .old_internal_name = "compaq_voodoo3_3500_agp"        },
     { .device = &voodoo_3_3500_agp_device,                      .old_internal_name = "voodoo3_3500_se_agp"            },
     { .device = &voodoo_3_3500_agp_device,                      .old_internal_name = "voodoo3_3500_si_agp"            },
